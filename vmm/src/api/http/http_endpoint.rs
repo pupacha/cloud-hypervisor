@@ -220,6 +220,41 @@ impl PutHandler for VmAddNet {
 
 impl GetHandler for VmAddNet {}
 
+// impl PutHandler for VmRestore {
+//     fn handle_request(
+//         &'static self,
+//         api_notifier: EventFd,
+//         api_sender: Sender<ApiRequest>,
+//         body: &Option<Body>,
+//         mut files: Vec<File>,
+//     ) -> std::result::Result<Option<Body>, HttpError> {
+//         if let Some(body) = body {
+//             let mut restore_cfg: RestoreConfig = serde_json::from_slice(body.raw())?;
+//             /*
+//               if files are not empty, add the fds list to restore.
+//             */
+//             // if net_cfg.fds.is_some() {
+//             //     warn!("Ignoring FDs sent via the HTTP request body");
+//             //     net_cfg.fds = None;
+//             // }
+//             // if !files.is_empty() {
+//             //     let fds = files.drain(..).map(|f| f.into_raw_fd()).collect();
+//             //     net_cfg.fds = Some(fds);
+//             // }
+            /*
+             * Pass MAP<RestoreConfig, FDs> ?
+             *
+             */
+//             self.send(api_notifier, api_sender, net_cfg)
+//                 .map_err(HttpError::ApiError)
+//         } else {
+//             Err(HttpError::BadRequest)
+//         }
+//     }
+// }
+
+// impl GetHandler for VmRestore {}
+
 // Common handler for boot, shutdown and reboot
 pub struct VmActionHandler {
     action: &'static dyn HttpVmAction,

@@ -6007,6 +6007,14 @@ mod common_parallel {
 
         let api_socket_source = format!("{}.1", temp_api_path(&guest.tmp_dir));
 
+        /*
+         * call open_tap()
+         * make an FD list from File::into_raw_fd()
+         * Pass FDs during Vm creation
+         *
+         * create new tap and pass FDs again during restore
+        */
+
         let net_id = "net123";
         let net_params = format!(
             "id={},tap=,mac={},ip={},mask=255.255.255.0",

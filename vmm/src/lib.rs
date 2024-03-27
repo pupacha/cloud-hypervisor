@@ -1301,6 +1301,7 @@ impl RequestHandler for Vmm {
         }
     }
 
+    /* actual restore implementation */
     fn vm_restore(&mut self, restore_cfg: RestoreConfig) -> result::Result<(), VmError> {
         if self.vm.is_some() || self.vm_config.is_some() {
             return Err(VmError::VmAlreadyCreated);
@@ -1316,6 +1317,7 @@ impl RequestHandler for Vmm {
         let vm_config = Arc::new(Mutex::new(
             recv_vm_config(source_url).map_err(VmError::Restore)?,
         ));
+
         let snapshot = recv_vm_state(source_url).map_err(VmError::Restore)?;
         #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
         let vm_snapshot = get_vm_snapshot(&snapshot).map_err(VmError::Restore)?;
@@ -1324,6 +1326,7 @@ impl RequestHandler for Vmm {
         self.vm_check_cpuid_compatibility(&vm_config, &vm_snapshot.common_cpuid)
             .map_err(VmError::Restore)?;
 
+        /* TODO: Update the vm_config with the latest FDs if they exist in Restore */
         self.vm_config = Some(Arc::clone(&vm_config));
 
         let exit_evt = self.exit_evt.try_clone().map_err(VmError::EventFdClone)?;

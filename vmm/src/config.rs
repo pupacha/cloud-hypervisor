@@ -2054,6 +2054,7 @@ pub struct RestoreConfig {
     pub source_url: PathBuf,
     #[serde(default)]
     pub prefault: bool,
+    // ADD FDs list attribute
 }
 
 impl RestoreConfig {
@@ -2076,6 +2077,8 @@ impl RestoreConfig {
             .map_err(Error::ParseRestore)?
             .unwrap_or(Toggle(false))
             .0;
+
+        // Prase for FD list if needed
 
         Ok(RestoreConfig {
             source_url,
