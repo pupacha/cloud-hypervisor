@@ -201,6 +201,12 @@ pub enum ValidationError {
     InvalidIoPortHex(String),
     #[cfg(feature = "sev_snp")]
     InvalidHostData,
+    /// Restore expects all net ids that have fds
+    RestoreMissingRequiredNetId(String),
+    /// Restore does not expect net ids that do not have fds
+    RestoreNonFdNetIdNotExpected(String),
+    /// Number of FDs passed during Restore are incorrect to the VmConfig
+    RestoreNetFdCountMismatch(usize, usize),
 }
 
 type ValidationResult<T> = std::result::Result<T, ValidationError>;
@@ -342,6 +348,18 @@ impl fmt::Display for ValidationError {
             #[cfg(feature = "sev_snp")]
             InvalidHostData => {
                 write!(f, "Invalid host data format")
+            }
+            RestoreMissingRequiredNetId(s) => {
+                write!(f, "Net id {s} is associated with FDs and is required")
+            }
+            RestoreNonFdNetIdNotExpected(s) => {
+                write!(f, "Net id {s} is not associated with FDs and not expected")
+            }
+            RestoreNetFdCountMismatch(u1, u2) => {
+                write!(
+                    f,
+                    "Number of Net FDs passed during Restore: {u1}. Expected: {u2}"
+                )
             }
         }
     }
@@ -2135,17 +2153,29 @@ pub struct RestoreConfig {
     pub source_url: PathBuf,
     #[serde(default)]
     pub prefault: bool,
+    #[serde(default)]
+    pub net_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub net_fds: Option<Vec<i32>>,
 }
 
 impl RestoreConfig {
     pub const SYNTAX: &'static str = "Restore from a VM snapshot. \
-        \nRestore parameters \"source_url=<source_url>,prefault=on|off\" \
+        \nRestore parameters \"source_url=<source_url>,prefault=on|off\", \
+        net_ids=<id1,id2...>,net_fds=<fd1,fd2...> \
         \n`source_url` should be a valid URL (e.g file:///foo/bar or tcp://192.168.1.10/foo) \
-        \n`prefault` brings memory pages in when enabled (disabled by default)";
+        \n`prefault` brings memory pages in when enabled (disabled by default) \
+        \n`net_ids` is a list of NetConfig id \
+        \n`net_fds` is a list of file descriptors for NetConfigs \
+        \n`net_ids` and `net_fds` are optional and should be used together";
 
     pub fn parse(restore: &str) -> Result<Self> {
         let mut parser = OptionParser::new();
-        parser.add("source_url").add("prefault");
+        parser
+            .add("source_url")
+            .add("prefault")
+            .add("net_ids")
+            .add("net_fds");
         parser.parse(restore).map_err(Error::ParseRestore)?;
 
         let source_url = parser
@@ -2157,11 +2187,76 @@ impl RestoreConfig {
             .map_err(Error::ParseRestore)?
             .unwrap_or(Toggle(false))
             .0;
+        let net_ids = parser
+            .convert::<StringList>("net_ids")
+            .map_err(Error::ParseRestore)?
+            .map(|v| v.0);
+        let net_fds = parser
+            .convert::<IntegerList>("net_fds")
+            .map_err(Error::ParseRestore)?
+            .map(|v| v.0.iter().map(|e| *e as i32).collect());
 
         Ok(RestoreConfig {
             source_url,
             prefault,
+            net_ids,
+            net_fds,
         })
+    }
+
+    pub fn validate(&self, vm_config: &VmConfig) -> ValidationResult<()> {
+        // Check if multiple same ids are passed
+        // verify if passed ids are valid
+        let vm_net_ids = match &vm_config.net {
+            // It's okay to unwrap id because it is guaranteed to have a net id in the snapshot config.
+            Some(net_configs) => net_configs
+                .iter()
+                .map(|v| v.id.as_ref().unwrap().clone())
+                .collect(),
+            None => Vec::new(),
+        };
+        if let Some(net_ids) = &self.net_ids {
+            let mut net_ids_set = BTreeSet::new();
+            for net_id in net_ids.iter() {
+                if !vm_net_ids.contains(net_id) {
+                    return Err(ValidationError::InvalidIdentifier(net_id.clone()));
+                }
+                if !net_ids_set.insert(net_id.clone()) {
+                    return Err(ValidationError::IdentifierNotUnique(net_id.clone()));
+                }
+            }
+        }
+        // Iterate through the net_ids and check if all required ids are passed without any unexpected ids
+        // Also, verify that the number of fds passed is equal to the number of fds required
+        let restore_net_fds_count = self.net_fds.as_ref().map(|v| v.len()).unwrap_or(0);
+        let mut expected_fd_count = 0;
+        if let Some(net_configs) = &vm_config.net {
+            let net_ids = match &self.net_ids {
+                Some(ids) => ids.clone(),
+                None => Vec::new(),
+            };
+            for net_config in net_configs.iter() {
+                if let Some(fds) = &net_config.fds {
+                    expected_fd_count += fds.len();
+                    if !net_ids.contains(net_config.id.as_ref().unwrap()) {
+                        return Err(ValidationError::RestoreMissingRequiredNetId(
+                            net_config.id.as_ref().unwrap().clone(),
+                        ));
+                    }
+                } else if net_ids.contains(net_config.id.as_ref().unwrap()) {
+                    return Err(ValidationError::RestoreNonFdNetIdNotExpected(
+                        net_config.id.as_ref().unwrap().clone(),
+                    ));
+                }
+            }
+        }
+        if restore_net_fds_count != expected_fd_count {
+            return Err(ValidationError::RestoreNetFdCountMismatch(
+                restore_net_fds_count,
+                expected_fd_count,
+            ));
+        }
+        Ok(())
     }
 }
 

@@ -1321,6 +1321,30 @@ impl RequestHandler for Vmm {
         let vm_config = Arc::new(Mutex::new(
             recv_vm_config(source_url).map_err(VmError::Restore)?,
         ));
+        restore_cfg
+            .validate(&vm_config.lock().unwrap().clone())
+            .map_err(VmError::ConfigValidation)?;
+
+        if let (Some(net_ids), Some(net_fds), Some(vm_net_configs)) = (
+            restore_cfg.net_ids,
+            restore_cfg.net_fds,
+            &mut vm_config.lock().unwrap().net,
+        ) {
+            let mut idx_net_fds = 0;
+            for net_id in net_ids.iter() {
+                for net_config in vm_net_configs.iter_mut() {
+                    if net_config.id == Some(net_id.clone()) {
+                        if let Some(fds) = net_config.fds.as_ref() {
+                            let len = fds.len();
+                            let new_fds = net_fds[idx_net_fds..idx_net_fds + len].to_vec();
+                            idx_net_fds += len;
+                            net_config.fds = Some(new_fds);
+                        }
+                    }
+                }
+            }
+        }
+
         let snapshot = recv_vm_state(source_url).map_err(VmError::Restore)?;
         #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
         let vm_snapshot = get_vm_snapshot(&snapshot).map_err(VmError::Restore)?;

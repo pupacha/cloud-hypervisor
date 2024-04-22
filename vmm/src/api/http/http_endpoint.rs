@@ -13,7 +13,7 @@ use crate::api::{
     VmReboot, VmReceiveMigration, VmRemoveDevice, VmResize, VmResizeZone, VmRestore, VmResume,
     VmSendMigration, VmShutdown, VmSnapshot,
 };
-use crate::config::NetConfig;
+use crate::config::{NetConfig, RestoreConfig};
 use micro_http::{Body, Method, Request, Response, StatusCode, Version};
 use std::fs::File;
 use std::os::unix::io::IntoRawFd;
@@ -216,7 +216,6 @@ vm_action_put_handler_body!(VmAddUserDevice);
 vm_action_put_handler_body!(VmRemoveDevice);
 vm_action_put_handler_body!(VmResize);
 vm_action_put_handler_body!(VmResizeZone);
-vm_action_put_handler_body!(VmRestore);
 vm_action_put_handler_body!(VmSnapshot);
 vm_action_put_handler_body!(VmReceiveMigration);
 vm_action_put_handler_body!(VmSendMigration);
@@ -225,6 +224,7 @@ vm_action_put_handler_body!(VmSendMigration);
 vm_action_put_handler_body!(VmCoredump);
 
 vm_action_put_handler_body_with_fds!(VmAddNet, NetConfig, fds);
+vm_action_put_handler_body_with_fds!(VmRestore, RestoreConfig, net_fds);
 
 // Common handler for boot, shutdown and reboot
 pub struct VmActionHandler {
