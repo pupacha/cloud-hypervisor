@@ -5995,15 +5995,20 @@ mod common_parallel {
     #[test]
     #[cfg(not(feature = "mshv"))]
     fn test_snapshot_restore_hotplug_virtiomem() {
-        _test_snapshot_restore(true);
+        _test_snapshot_restore(true, false);
     }
 
     #[test]
     fn test_snapshot_restore_basic() {
-        _test_snapshot_restore(false);
+        _test_snapshot_restore(false, false);
     }
 
-    fn _test_snapshot_restore(use_hotplug: bool) {
+    #[test]
+    fn test_snapshot_restore_with_fd() {
+        _test_snapshot_restore(false, true);
+    }
+
+    fn _test_snapshot_restore(use_hotplug: bool, use_fd: bool) {
         let focal = UbuntuDiskConfig::new(FOCAL_IMAGE_NAME.to_string());
         let guest = Guest::new(Box::new(focal));
         let kernel_path = direct_kernel_boot_path();
@@ -6011,10 +6016,42 @@ mod common_parallel {
         let api_socket_source = format!("{}.1", temp_api_path(&guest.tmp_dir));
 
         let net_id = "net123";
-        let net_params = format!(
-            "id={},tap=,mac={},ip={},mask=255.255.255.0",
-            net_id, guest.network.guest_mac, guest.network.host_ip
-        );
+        // num_queue_pairs & tap_name are used only if use_fd is set to true
+        let num_queue_pairs: usize = 2;
+        // use a name that does not conflict with tap dev created from other tests
+        let tap_name = "chtap999";
+        use std::str::FromStr;
+        let taps = if use_fd {
+            net_util::open_tap(
+                Some(tap_name),
+                Some(std::net::Ipv4Addr::from_str(&guest.network.host_ip).unwrap()),
+                None,
+                &mut None,
+                None,
+                num_queue_pairs,
+                Some(libc::O_RDWR | libc::O_NONBLOCK),
+            )
+            .unwrap()
+        } else {
+            vec![]
+        };
+        let net_params = if use_fd {
+            format!(
+                "id={},fd=[{},{}],mac={},ip={},mask=255.255.255.0,num_queues={}",
+                net_id,
+                taps[0].as_raw_fd(),
+                taps[1].as_raw_fd(),
+                guest.network.guest_mac,
+                guest.network.host_ip,
+                num_queue_pairs * 2
+            )
+        } else {
+            format!(
+                "id={},tap=,mac={},ip={},mask=255.255.255.0",
+                net_id, guest.network.guest_mac, guest.network.host_ip
+            )
+        };
+
         let mut mem_params = "size=2G";
 
         if use_hotplug {
@@ -6058,6 +6095,13 @@ mod common_parallel {
 
         let r = std::panic::catch_unwind(|| {
             guest.wait_vm_boot(None).unwrap();
+
+            if use_fd {
+                // close the fds after VM boots, as CH duplicates them before using
+                for tap in taps.iter() {
+                    unsafe { libc::close(tap.as_raw_fd()) };
+                }
+            }
 
             // Check the number of vCPUs
             assert_eq!(guest.get_cpu_count().unwrap_or_default(), 4);
@@ -6114,12 +6158,45 @@ mod common_parallel {
                 assert!(check_latest_events_exact(&latest_events, &event_path));
 
                 // Plug the virtio-net device again
+                let taps = if use_fd {
+                    net_util::open_tap(
+                        Some(tap_name),
+                        Some(std::net::Ipv4Addr::from_str(&guest.network.host_ip).unwrap()),
+                        None,
+                        &mut None,
+                        None,
+                        num_queue_pairs,
+                        Some(libc::O_RDWR | libc::O_NONBLOCK),
+                    )
+                    .unwrap()
+                } else {
+                    vec![]
+                };
+                let net_params = if use_fd {
+                    format!(
+                        "id={},fd=[{},{}],mac={},ip={},mask=255.255.255.0,num_queues={}",
+                        net_id,
+                        taps[0].as_raw_fd(),
+                        taps[1].as_raw_fd(),
+                        guest.network.guest_mac,
+                        guest.network.host_ip,
+                        num_queue_pairs * 2
+                    )
+                } else {
+                    net_params
+                };
                 assert!(remote_command(
                     &api_socket_source,
                     "add-net",
                     Some(net_params.as_str()),
                 ));
                 thread::sleep(std::time::Duration::new(10, 0));
+                if use_fd {
+                    // close the fds once guest boots up, as CH duplicates them before using
+                    for tap in taps.iter() {
+                        unsafe { libc::close(tap.as_raw_fd()) };
+                    }
+                }
             }
 
             // Pause the VM
@@ -6191,16 +6268,52 @@ mod common_parallel {
                 "--event-monitor",
                 format!("path={event_path_restored}").as_str(),
             ])
-            .args([
-                "--restore",
-                format!("source_url=file://{snapshot_dir}").as_str(),
-            ])
             .capture_output()
             .spawn()
             .unwrap();
+        thread::sleep(std::time::Duration::new(2, 0));
+
+        let taps = if use_fd {
+            net_util::open_tap(
+                Some(tap_name),
+                Some(std::net::Ipv4Addr::from_str(&guest.network.host_ip).unwrap()),
+                None,
+                &mut None,
+                None,
+                num_queue_pairs,
+                Some(libc::O_RDWR | libc::O_NONBLOCK),
+            )
+            .unwrap()
+        } else {
+            vec![]
+        };
+        let restore_params = if use_fd {
+            format!(
+                "source_url=file://{},net_fds=[{}@[{},{}]]",
+                snapshot_dir,
+                net_id,
+                taps[0].as_raw_fd(),
+                taps[1].as_raw_fd()
+            )
+        } else {
+            format!("source_url=file://{}", snapshot_dir)
+        };
+        assert!(remote_command(
+            &api_socket_restored,
+            "restore",
+            Some(restore_params.as_str())
+        ));
 
         // Wait for the VM to be restored
         thread::sleep(std::time::Duration::new(20, 0));
+
+        if use_fd {
+            // close the fds as CH duplicates them before using
+            for tap in taps.iter() {
+                unsafe { libc::close(tap.as_raw_fd()) };
+            }
+        }
+
         let expected_events = [
             &MetaEvent {
                 event: "starting".to_string(),
