@@ -21,7 +21,8 @@ CLH_BUILD_DIR="${CLH_ROOT_DIR}/build"
 CLH_CARGO_TARGET="${CLH_BUILD_DIR}/cargo_target"
 CLH_DOCKERFILE="${CLH_SCRIPTS_DIR}/../resources/Dockerfile"
 CLH_CTR_BUILD_DIR="/tmp/cloud-hypervisor/ctr-build"
-CLH_INTEGRATION_WORKLOADS="${HOME}/workloads"
+# CLH_INTEGRATION_WORKLOADS="${HOME}/workloads"
+CLH_INTEGRATION_WORKLOADS="/datadrive/WORK/workloads"
 
 # Container paths
 CTR_CLH_ROOT_DIR="/cloud-hypervisor"
