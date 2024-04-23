@@ -163,6 +163,38 @@ macro_rules! vm_action_put_handler_body {
     };
 }
 
+macro_rules! vm_action_put_handler_body_with_fds {
+    ($action:ty, $config:ty, $fds_field:ident) => {
+        impl PutHandler for $action {
+            fn handle_request(
+                &'static self,
+                api_notifier: EventFd,
+                api_sender: Sender<ApiRequest>,
+                body: &Option<Body>,
+                mut files: Vec<File>,
+            ) -> std::result::Result<Option<Body>, HttpError> {
+                if let Some(body) = body {
+                    let mut cfg: $config = serde_json::from_slice(body.raw())?;
+                    if cfg.$fds_field.is_some() {
+                        warn!("Ignoring FDs sent via the HTTP request body");
+                        cfg.$fds_field = None;
+                    }
+                    if !files.is_empty() {
+                        let fds = files.drain(..).map(|f| f.into_raw_fd()).collect();
+                        cfg.$fds_field = Some(fds);
+                    }
+                    self.send(api_notifier, api_sender, cfg)
+                        .map_err(HttpError::ApiError)
+                } else {
+                    Err(HttpError::BadRequest)
+                }
+            }
+        }
+
+        impl GetHandler for $action {}
+    };
+}
+
 vm_action_get_handler!(VmCounters);
 
 vm_action_put_handler!(VmBoot);
@@ -192,33 +224,7 @@ vm_action_put_handler_body!(VmSendMigration);
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 vm_action_put_handler_body!(VmCoredump);
 
-impl PutHandler for VmAddNet {
-    fn handle_request(
-        &'static self,
-        api_notifier: EventFd,
-        api_sender: Sender<ApiRequest>,
-        body: &Option<Body>,
-        mut files: Vec<File>,
-    ) -> std::result::Result<Option<Body>, HttpError> {
-        if let Some(body) = body {
-            let mut net_cfg: NetConfig = serde_json::from_slice(body.raw())?;
-            if net_cfg.fds.is_some() {
-                warn!("Ignoring FDs sent via the HTTP request body");
-                net_cfg.fds = None;
-            }
-            if !files.is_empty() {
-                let fds = files.drain(..).map(|f| f.into_raw_fd()).collect();
-                net_cfg.fds = Some(fds);
-            }
-            self.send(api_notifier, api_sender, net_cfg)
-                .map_err(HttpError::ApiError)
-        } else {
-            Err(HttpError::BadRequest)
-        }
-    }
-}
-
-impl GetHandler for VmAddNet {}
+vm_action_put_handler_body_with_fds!(VmAddNet, NetConfig, fds);
 
 // Common handler for boot, shutdown and reboot
 pub struct VmActionHandler {
