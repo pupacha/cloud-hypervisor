@@ -3665,6 +3665,149 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_restore_parsing() -> Result<()> {
+        assert_eq!(
+            RestoreConfig::parse("source_url=/path/to/snapshot")?,
+            RestoreConfig {
+                source_url: PathBuf::from("/path/to/snapshot"),
+                prefault: false,
+                net_ids: None,
+                net_fds: None,
+            }
+        );
+        assert_eq!(
+            RestoreConfig::parse(
+                "source_url=/path/to/snapshot,prefault=off,net_ids=[net0,net1],net_fds=[3,4,5,6]"
+            )?,
+            RestoreConfig {
+                source_url: PathBuf::from("/path/to/snapshot"),
+                prefault: false,
+                net_ids: Some(vec!["net0".to_string(), "net1".to_string()]),
+                net_fds: Some(vec![3, 4, 5, 6]),
+            }
+        );
+        // Parsing should fail as source_url is a required field
+        assert!(RestoreConfig::parse("prefault=off").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_restore_config_validation() {
+        // interested in only VmConfig.net, so set rest to default values
+        let mut snapshot_vm_config = VmConfig {
+            cpus: CpusConfig::default(),
+            memory: MemoryConfig::default(),
+            payload: None,
+            rate_limit_groups: None,
+            disks: None,
+            rng: RngConfig::default(),
+            balloon: None,
+            fs: None,
+            pmem: None,
+            serial: default_serial(),
+            console: default_console(),
+            #[cfg(target_arch = "x86_64")]
+            debug_console: DebugConsoleConfig::default(),
+            devices: None,
+            user_devices: None,
+            vdpa: None,
+            vsock: None,
+            pvpanic: false,
+            iommu: false,
+            #[cfg(target_arch = "x86_64")]
+            sgx_epc: None,
+            numa: None,
+            watchdog: false,
+            #[cfg(feature = "guest_debug")]
+            gdb: false,
+            pci_segments: None,
+            platform: None,
+            tpm: None,
+            preserved_fds: None,
+            net: Some(vec![
+                NetConfig {
+                    id: Some("net0".to_owned()),
+                    num_queues: 2,
+                    fds: Some(vec![-1, -1, -1, -1]),
+                    ..net_fixture()
+                },
+                NetConfig {
+                    id: Some("net1".to_owned()),
+                    num_queues: 1,
+                    fds: Some(vec![-1, -1]),
+                    ..net_fixture()
+                },
+                NetConfig {
+                    id: Some("net2".to_owned()),
+                    fds: None,
+                    ..net_fixture()
+                },
+            ]),
+        };
+
+        let valid_config = RestoreConfig {
+            source_url: PathBuf::from("/path/to/snapshot"),
+            prefault: false,
+            net_ids: Some(vec!["net0".to_string(), "net1".to_string()]),
+            net_fds: Some(vec![3, 4, 5, 6, 7, 8]),
+        };
+        assert!(valid_config.validate(&snapshot_vm_config).is_ok());
+
+        let mut invalid_config = valid_config.clone();
+        invalid_config.net_ids = Some(vec!["netx".to_string()]);
+        assert_eq!(
+            invalid_config.validate(&snapshot_vm_config),
+            Err(ValidationError::InvalidIdentifier("netx".to_string()))
+        );
+
+        invalid_config.net_ids = Some(vec!["net0".to_string(), "net0".to_string()]);
+        assert_eq!(
+            invalid_config.validate(&snapshot_vm_config),
+            Err(ValidationError::IdentifierNotUnique("net0".to_string()))
+        );
+
+        invalid_config.net_ids = Some(vec!["net1".to_string()]);
+        assert_eq!(
+            invalid_config.validate(&snapshot_vm_config),
+            Err(ValidationError::RestoreMissingRequiredNetId(
+                "net0".to_string()
+            ))
+        );
+
+        invalid_config.net_ids = Some(vec![
+            "net0".to_string(),
+            "net1".to_string(),
+            "net2".to_string(),
+        ]);
+        assert_eq!(
+            invalid_config.validate(&snapshot_vm_config),
+            Err(ValidationError::RestoreNonFdNetIdNotExpected(
+                "net2".to_string()
+            ))
+        );
+
+        invalid_config.net_ids = Some(vec!["net0".to_string(), "net1".to_string()]);
+        invalid_config.net_fds = Some(vec![3, 4, 5, 6]);
+        assert_eq!(
+            invalid_config.validate(&snapshot_vm_config),
+            Err(ValidationError::RestoreNetFdCountMismatch(4, 6))
+        );
+
+        let another_valid_config = RestoreConfig {
+            source_url: PathBuf::from("/path/to/snapshot"),
+            prefault: false,
+            net_ids: None,
+            net_fds: None,
+        };
+        snapshot_vm_config.net = Some(vec![NetConfig {
+            id: Some("net2".to_owned()),
+            fds: None,
+            ..net_fixture()
+        }]);
+        assert!(another_valid_config.validate(&snapshot_vm_config).is_ok());
+    }
+
     fn platform_fixture() -> PlatformConfig {
         PlatformConfig {
             num_pci_segments: MAX_NUM_PCI_SEGMENTS,
