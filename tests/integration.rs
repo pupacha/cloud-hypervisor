@@ -6342,6 +6342,13 @@ mod common_parallel {
             &event_path_restored
         ));
 
+        // Remove the snapshot dir
+        Command::new("rm")
+            .arg("-rf")
+            .arg(snapshot_dir.as_str())
+            .output()
+            .unwrap();
+
         let r = std::panic::catch_unwind(|| {
             // Resume the VM
             assert!(remote_command(&api_socket_restored, "resume", None));
