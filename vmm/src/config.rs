@@ -2149,6 +2149,12 @@ impl NumaConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, Default)]
+pub struct RestoredNetConfig {
+    pub id: String,
+    pub num_fd: usize,
+    pub fds: Option<Vec<i32>>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, Default)]
 pub struct RestoreConfig {
     pub source_url: PathBuf,
     #[serde(default)]
@@ -2157,6 +2163,8 @@ pub struct RestoreConfig {
     pub net_ids: Option<Vec<String>>,
     #[serde(default)]
     pub net_fds: Option<Vec<i32>>,
+    #[serde(default)]
+    pub new_fds_net: Option<Vec<RestoredNetConfig>>,
 }
 
 impl RestoreConfig {
@@ -2175,7 +2183,8 @@ impl RestoreConfig {
             .add("source_url")
             .add("prefault")
             .add("net_ids")
-            .add("net_fds");
+            .add("net_fds")
+            .add("new_fds_net");
         parser.parse(restore).map_err(Error::ParseRestore)?;
 
         let source_url = parser
@@ -2195,12 +2204,25 @@ impl RestoreConfig {
             .convert::<IntegerList>("net_fds")
             .map_err(Error::ParseRestore)?
             .map(|v| v.0.iter().map(|e| *e as i32).collect());
+        let new_fds_net = parser
+            .convert::<Tuple<String, (usize, Vec<u64>)>>("new_fds_net")
+            .map_err(Error::ParseRestore)?
+            .map(|v| {
+                v.0.iter()
+                    .map(|(e1, (e2, e3))| RestoredNetConfig {
+                        id: e1.clone(),
+                        num_fd: *e2 as usize,
+                        fds: Some(e3.iter().map(|e| *e as i32).collect()),
+                    })
+                    .collect()
+            });
 
         Ok(RestoreConfig {
             source_url,
             prefault,
             net_ids,
             net_fds,
+            new_fds_net,
         })
     }
 
@@ -3674,17 +3696,30 @@ mod tests {
                 prefault: false,
                 net_ids: None,
                 net_fds: None,
+                new_fds_net: None,
             }
         );
         assert_eq!(
             RestoreConfig::parse(
-                "source_url=/path/to/snapshot,prefault=off,net_ids=[net0,net1],net_fds=[3,4,5,6]"
+                "source_url=/path/to/snapshot,prefault=off,net_ids=[net0,net1],net_fds=[3,4,5,6],new_fds_net=[net0@(2,[3,4]),net1@(1,[5])]"
             )?,
             RestoreConfig {
                 source_url: PathBuf::from("/path/to/snapshot"),
                 prefault: false,
                 net_ids: Some(vec!["net0".to_string(), "net1".to_string()]),
                 net_fds: Some(vec![3, 4, 5, 6]),
+                new_fds_net: Some(vec![
+                    RestoredNetConfig {
+                        id: "net0".to_string(),
+                        num_fd: 2,
+                        fds: Some(vec![3,4]),
+                    },
+                    RestoredNetConfig {
+                        id: "net1".to_string(),
+                        num_fd: 1,
+                        fds: Some(vec![5]),
+                    }
+                ]),
             }
         );
         // Parsing should fail as source_url is a required field

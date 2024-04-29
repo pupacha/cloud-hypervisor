@@ -41,6 +41,7 @@ type OptionParserResult<T> = std::result::Result<T, OptionParserError>;
 fn split_commas(s: &str) -> OptionParserResult<Vec<String>> {
     let mut list: Vec<String> = Vec::new();
     let mut opened_brackets = 0;
+    let mut opened_parentheses = 0;
     let mut in_quotes = false;
     let mut current = String::new();
 
@@ -57,9 +58,20 @@ fn split_commas(s: &str) -> OptionParserResult<Vec<String>> {
                 }
                 current.push(']');
             }
+            '(' => {
+                opened_parentheses += 1;
+                current.push('(');
+            }
+            ')' => {
+                opened_parentheses -= 1;
+                if opened_parentheses < 0 {
+                    return Err(OptionParserError::InvalidSyntax(s.to_owned()));
+                }
+                current.push(')');
+            }
             '"' => in_quotes = !in_quotes,
             ',' => {
-                if opened_brackets > 0 || in_quotes {
+                if opened_brackets > 0 || opened_parentheses > 0 || in_quotes {
                     current.push(',')
                 } else {
                     list.push(current);
@@ -71,7 +83,7 @@ fn split_commas(s: &str) -> OptionParserResult<Vec<String>> {
     }
     list.push(current);
 
-    if opened_brackets != 0 || in_quotes {
+    if opened_brackets != 0 || opened_parentheses != 0 || in_quotes {
         return Err(OptionParserError::InvalidSyntax(s.to_owned()));
     }
 
@@ -301,6 +313,31 @@ impl TupleValue for Vec<usize> {
     }
 }
 
+impl TupleValue for (usize, Vec<u64>) {
+    fn parse_value(input: &str) -> Result<Self, TupleError> {
+
+        let body = input
+            .trim()
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(')'))
+            .ok_or_else(|| TupleError::InvalidValue(input.to_string()))?;
+
+        let items = split_commas(body).map_err(TupleError::SplitOutsideBrackets)?;
+        // let items: Vec<&str> = body.split('@').collect();
+
+        if items.len() != 2 {
+            return Err(TupleError::InvalidValue(input.to_string()));
+        }
+
+        let item1 = items[0]
+            .parse::<usize>()
+            .map_err(|_| TupleError::InvalidValue(items[0].to_owned()))?;
+        let item2 = TupleValue::parse_value(items[1].as_str())?;
+
+        Ok((item1, item2))
+    }
+}
+
 pub struct Tuple<S, T>(pub Vec<(S, T)>);
 
 pub enum TupleError {
@@ -377,6 +414,7 @@ mod tests {
             .add("hotplug_method")
             .add("hotplug_size")
             .add("topology")
+            .add("affinity")
             .add("cmdline");
 
         assert!(parser.parse("size=128M,hanging_param").is_err());
@@ -408,6 +446,8 @@ mod tests {
 
         assert!(parser.parse("topology=[").is_err());
         assert!(parser.parse("topology=[[[]]]]").is_err());
+        // assert!(parser.parse("topology=[2@[1,3]]").is_err());
+        assert!(parser.parse("affinity=[net0@(2,[3,4]),net1@(2,[3,4])]").is_ok());
 
         assert!(parser.parse("cmdline=\"console=ttyS0,9600n8\"").is_ok());
         assert_eq!(
