@@ -13,7 +13,7 @@ use crate::api::{
     VmReboot, VmReceiveMigration, VmRemoveDevice, VmResize, VmResizeZone, VmRestore, VmResume,
     VmSendMigration, VmShutdown, VmSnapshot,
 };
-use crate::config::NetConfig;
+use crate::config::{NetConfig, RestoreConfig};
 use micro_http::{Body, Method, Request, Response, StatusCode, Version};
 use std::fs::File;
 use std::os::unix::io::IntoRawFd;
@@ -216,7 +216,6 @@ vm_action_put_handler_body!(VmAddUserDevice);
 vm_action_put_handler_body!(VmRemoveDevice);
 vm_action_put_handler_body!(VmResize);
 vm_action_put_handler_body!(VmResizeZone);
-vm_action_put_handler_body!(VmRestore);
 vm_action_put_handler_body!(VmSnapshot);
 vm_action_put_handler_body!(VmReceiveMigration);
 vm_action_put_handler_body!(VmSendMigration);
@@ -225,6 +224,51 @@ vm_action_put_handler_body!(VmSendMigration);
 vm_action_put_handler_body!(VmCoredump);
 
 vm_action_put_handler_body_with_fds!(VmAddNet, NetConfig, fds);
+
+impl PutHandler for VmRestore {
+    fn handle_request(
+        &'static self,
+        api_notifier: EventFd,
+        api_sender: Sender<ApiRequest>,
+        body: &Option<Body>,
+        mut files: Vec<File>,
+    ) -> std::result::Result<Option<Body>, HttpError> {
+        if let Some(body) = body {
+            let mut restore_cfg: RestoreConfig = serde_json::from_slice(body.raw())?;
+
+            let mut fds = Vec::new();
+            if !files.is_empty() {
+                fds = files.drain(..).map(|f| f.into_raw_fd()).collect();
+            }
+            if let Some(ref mut nets) = restore_cfg.net_fds {
+                warn!("Ignoring FDs sent via the HTTP request body");
+                let mut start_idx = 0;
+                for restored_net in nets.iter_mut() {
+                    // If there are no more FDs to assign, set fds field to None
+                    if start_idx >= fds.len() || restored_net.num_fds == 0 {
+                        restored_net.fds = None;
+                    } else {
+                        let end_idx = std::cmp::min(start_idx + restored_net.num_fds, fds.len());
+                        restored_net.fds = Some(fds[start_idx..end_idx].to_vec());
+                        start_idx = end_idx;
+                    }
+                }
+                if start_idx >= fds.len() && !fds.is_empty() {
+                    warn!("Ignoring FDs sent via SCM_RIGHTS");
+                }
+            } else if !fds.is_empty() {
+                warn!("Ignoring FDs sent via SCM_RIGHTS as the request body does not contain 'net_ds' field");
+            }
+
+            self.send(api_notifier, api_sender, restore_cfg)
+                .map_err(HttpError::ApiError)
+        } else {
+            Err(HttpError::BadRequest)
+        }
+    }
+}
+
+impl GetHandler for VmRestore {}
 
 // Common handler for boot, shutdown and reboot
 pub struct VmActionHandler {
