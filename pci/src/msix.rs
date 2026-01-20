@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::{io, result};
 
 use byteorder::{ByteOrder, LittleEndian};
-use log::{debug, error};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use vm_device::interrupt::{
@@ -172,7 +172,7 @@ impl MsixConfig {
         // Update interrupt routing
         if old_masked != self.masked || old_enabled != self.enabled {
             if self.enabled && !self.masked {
-                debug!("MSI-X enabled for device 0x{:x}", self.devid);
+                info!("MSI-X enabled for device 0x{:x}", self.devid);
                 for (idx, table_entry) in self.table_entries.iter().enumerate() {
                     let config = MsiIrqSourceConfig {
                         high_addr: table_entry.msg_addr_hi,
@@ -191,7 +191,7 @@ impl MsixConfig {
                     }
                 }
             } else if old_enabled || !old_masked {
-                debug!("MSI-X disabled for device 0x{:x}", self.devid);
+                info!("MSI-X disabled for device 0x{:x}", self.devid);
                 if let Err(e) = self.interrupt_source_group.disable() {
                     error!("Failed disabling irq_fd: {e:?}");
                 }
@@ -218,7 +218,7 @@ impl MsixConfig {
         let modulo_offset = offset % MSIX_TABLE_ENTRIES_MODULO;
 
         if index >= self.table_entries.len() {
-            debug!("Invalid MSI-X table entry index {index}");
+            info!("Invalid MSI-X table entry index {index}");
             data.copy_from_slice(&[0xff; 8][..data.len()]);
             return;
         }
@@ -236,7 +236,7 @@ impl MsixConfig {
                     }
                 };
 
-                debug!("MSI_R TABLE offset 0x{offset:x} data 0x{value:x}");
+                info!("MSI_R TABLE offset 0x{offset:x} modulo_offset 0x{modulo_offset:x} data 0x{value:x} for device 0x{:x}", self.devid);
                 LittleEndian::write_u32(data, value);
             }
             8 => {
@@ -255,7 +255,7 @@ impl MsixConfig {
                     }
                 };
 
-                debug!("MSI_R TABLE offset 0x{offset:x} data 0x{value:x}");
+                info!("MSI_R TABLE offset 0x{offset:x} modulo_offset 0x{modulo_offset:x} data 0x{value:x} for device 0x{:x}", self.devid);
                 LittleEndian::write_u64(data, value);
             }
             _ => {
@@ -271,7 +271,7 @@ impl MsixConfig {
         let modulo_offset = offset % MSIX_TABLE_ENTRIES_MODULO;
 
         if index >= self.table_entries.len() {
-            debug!("Invalid MSI-X table entry index {index}");
+            info!("Invalid MSI-X table entry index {index}");
             return;
         }
 
@@ -291,7 +291,7 @@ impl MsixConfig {
                     _ => error!("invalid offset"),
                 }
 
-                debug!("MSI_W TABLE offset 0x{offset:x} data 0x{value:x}");
+                info!("MSI_W TABLE offset 0x{offset:x} modulo_offset 0x{modulo_offset:x} data 0x{value:x} for device 0x{:x}", self.devid);
             }
             8 => {
                 let value = LittleEndian::read_u64(data);
@@ -307,7 +307,7 @@ impl MsixConfig {
                     _ => error!("invalid offset"),
                 }
 
-                debug!("MSI_W TABLE offset 0x{offset:x} data 0x{value:x}");
+                info!("MSI_W TABLE offset 0x{offset:x} modulo_offset 0x{modulo_offset:x} data 0x{value:x} for device 0x{:x}", self.devid);
             }
             _ => error!("invalid data length"),
         }
@@ -367,7 +367,7 @@ impl MsixConfig {
         let modulo_offset = offset % MSIX_PBA_ENTRIES_MODULO;
 
         if index >= self.pba_entries.len() {
-            debug!("Invalid MSI-X PBA entry index {index}");
+            info!("Invalid MSI-X PBA entry index {index}");
             data.copy_from_slice(&[0xff; 8][..data.len()]);
             return;
         }
@@ -383,7 +383,7 @@ impl MsixConfig {
                     }
                 };
 
-                debug!("MSI_R PBA offset 0x{offset:x} data 0x{value:x}");
+                info!("MSI_R PBA offset 0x{offset:x} modulo_offset 0x{modulo_offset:x} data 0x{value:x} for device 0x{:x}", self.devid);
                 LittleEndian::write_u32(data, value);
             }
             8 => {
@@ -395,7 +395,7 @@ impl MsixConfig {
                     }
                 };
 
-                debug!("MSI_R PBA offset 0x{offset:x} data 0x{value:x}");
+                info!("MSI_R PBA offset 0x{offset:x} modulo_offset 0x{modulo_offset:x} data 0x{value:x} for device 0x{:x}", self.devid);
                 LittleEndian::write_u64(data, value);
             }
             _ => {
@@ -438,7 +438,7 @@ impl MsixConfig {
             .interrupt_source_group
             .trigger(vector as InterruptIndex)
         {
-            Ok(_) => debug!("MSI-X injected on vector control flip"),
+            Ok(_) => info!("MSI-X injected on vector control flip"),
             Err(e) => error!("failed to inject MSI-X: {e}"),
         }
 
