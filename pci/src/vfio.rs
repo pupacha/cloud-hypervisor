@@ -1132,6 +1132,13 @@ impl VfioCommon {
     }
 
     fn initialize_legacy_interrupt(&mut self) -> Result<(), VfioPciError> {
+        // Skip INTx entirely if the device supports MSI-X, as modern devices
+        // (especially NVMe) may report INTx available via VFIO but have no
+        // actual legacy interrupt wiring (IRQ 0).
+        if self.interrupt.msix.is_some() {
+            return Ok(());
+        }
+
         if let Some(irq_info) = self.vfio_wrapper.get_irq_info(VFIO_PCI_INTX_IRQ_INDEX)
             && irq_info.count == 0
         {
